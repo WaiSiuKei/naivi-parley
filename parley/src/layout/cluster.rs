@@ -540,7 +540,8 @@ impl Iterator for GlyphIter<'_> {
     }
 }
 
-#[cfg(test)]
+// macOS uses the CoreText path and does not run the harfrust cluster tests.
+#[cfg(all(test, not(target_os = "macos")))]
 mod tests {
     use crate::{
         Alignment, AlignmentOptions, Cluster, FontContext, Layout, LayoutContext,

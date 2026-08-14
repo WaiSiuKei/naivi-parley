@@ -46,6 +46,14 @@ impl<'a, B: Brush> Run<'a, B> {
         self.layout.data.fonts.get(self.data.font_index).unwrap()
     }
 
+    /// Returns the self-describing native font identity for the run (macOS
+    /// CoreText backend only). `None` on non-macOS targets and on macOS runs
+    /// that went through the harfrust path.
+    #[cfg(target_os = "macos")]
+    pub fn native_font(&self) -> Option<&crate::MacNativeFont> {
+        self.data.native_font.as_ref()
+    }
+
     /// Returns the font size for the run.
     pub fn font_size(&self) -> f32 {
         self.data.font_size

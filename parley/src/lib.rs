@@ -129,6 +129,10 @@ pub mod style;
 mod tests;
 
 pub use linebender_resource_handle::FontData;
+#[cfg(target_os = "macos")]
+mod macos_font;
+#[cfg(target_os = "macos")]
+pub use macos_font::MacNativeFont;
 pub use util::BoundingBox;
 
 pub use builder::{RangedBuilder, StyleRunBuilder, TreeBuilder};

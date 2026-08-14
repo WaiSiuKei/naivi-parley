@@ -2876,7 +2876,6 @@ version = "0.10.0"
 dependencies = [
  "accesskit",
  "core-foundation 0.10.0",
- "core-graphics 0.24.0",
  "core-text",
  "core_maths",
  "fontique",

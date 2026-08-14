@@ -26,6 +26,9 @@ use fontique::{self, Query, QueryFamily, QueryFont};
 
 mod cache;
 
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
+
 pub(crate) struct ShapeContext {
     shape_data_cache: LruCache<cache::ShapeDataKey, harfrust::ShaperData>,
     shape_instance_cache: LruCache<cache::ShapeInstanceId, harfrust::ShaperInstance>,
@@ -73,6 +76,7 @@ pub(crate) fn shape_text<'a, B: Brush>(
     mut text: &str,
     layout: &mut Layout<B>,
     analysis_data_sources: &AnalysisDataSources,
+    #[cfg(target_os = "macos")] mac_families: &macos::MacFamilyNames,
 ) {
     // If we have both empty text and no inline boxes, shape with a fake space
     // to generate metrics that can be used to size a cursor.
@@ -176,6 +180,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
                 infos,
                 layout,
                 analysis_data_sources,
+                #[cfg(target_os = "macos")]
+                mac_families,
             );
             item.size = style.font_size;
             item.level = level;
@@ -212,6 +218,8 @@ pub(crate) fn shape_text<'a, B: Brush>(
             infos,
             layout,
             analysis_data_sources,
+            #[cfg(target_os = "macos")]
+            mac_families,
         );
     }
 
@@ -288,6 +296,15 @@ fn fill_cluster_in_place(
     char_cluster.force_normalize = force_normalize;
 }
 
+/// Dispatch: on macOS, shape the whole item through CoreText (cascade
+/// fallback), skipping the harfrust segment loop entirely (KTD1). On other
+/// targets the upstream harfrust body below runs unchanged.
+///
+/// The `unreachable_code` allow covers the macOS build, where the harfrust
+/// body after the early `return` is compiled (so every shared helper and
+/// import stays live, keeping upstream analysis/cache modules warning-free)
+/// but unreachable.
+#[allow(unreachable_code)]
 fn shape_item<'a, B: Brush>(
     fq: &mut Query<'a>,
     rcx: &'a ResolveContext,
@@ -300,9 +317,30 @@ fn shape_item<'a, B: Brush>(
     infos: &[(CharInfo, u16)],
     layout: &mut Layout<B>,
     analysis_data_sources: &AnalysisDataSources,
+    #[cfg(target_os = "macos")] mac_families: &macos::MacFamilyNames,
 ) {
     let item_text = &text[text_range.clone()];
     let item_infos = &infos[char_range.start..char_range.end]; // Only process current item
+
+    #[cfg(target_os = "macos")]
+    {
+        // macOS: shape the whole item through CoreText (cascade fallback),
+        // skipping the harfrust segment loop entirely (KTD1).
+        let _ = (fq, analysis_data_sources);
+        macos::shape_item_coretext(
+            rcx,
+            styles,
+            item,
+            scx,
+            item_text,
+            item_infos,
+            text_range.start,
+            layout,
+            mac_families,
+        );
+        return;
+    }
+
     let first_style_index = item_infos[0].1;
     let fb_script = convert::script_to_fontique(item.script, analysis_data_sources);
     let mut font_selector =

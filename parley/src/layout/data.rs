@@ -8,7 +8,14 @@ use crate::util::nearly_zero;
 use crate::{FontData, IndentOptions, InlineBoxKind, LineHeight, OverflowWrap, TextWrapMode};
 use core::ops::Range;
 
+#[cfg(target_os = "macos")]
+use alloc::sync::Arc;
+#[cfg(target_os = "macos")]
+use alloc::vec;
 use alloc::vec::Vec;
+
+#[cfg(target_os = "macos")]
+use linebender_resource_handle::Blob;
 
 use crate::analysis::cluster::Whitespace;
 use crate::analysis::{Boundary, CharInfo};
@@ -143,6 +150,10 @@ pub(crate) struct RunData {
     pub(crate) letter_spacing: f32,
     /// Total advance of the run.
     pub(crate) advance: f32,
+    /// Self-describing native font identity (macOS CoreText backend only).
+    /// `None` on every non-macOS target and on macOS harfrust runs.
+    #[cfg(target_os = "macos")]
+    pub(crate) native_font: Option<crate::MacNativeFont>,
 }
 
 #[derive(Copy, Clone, Default, PartialEq, Debug)]
@@ -471,6 +482,8 @@ impl<B: Brush> LayoutData<B> {
             word_spacing,
             letter_spacing,
             advance: 0.,
+            #[cfg(target_os = "macos")]
+            native_font: None,
         };
 
         // `HarfRust` returns glyphs in visual order, so we need to process them as such while
@@ -957,6 +970,267 @@ fn push_cluster(
         text_len: cluster_start_char.1.len_utf8() as u8,
         glyph_offset: final_glyph_offset,
         text_offset: cluster_start_char.0 as u16,
+        advance: final_advance,
+    });
+}
+
+// ── macOS CoreText run-push (naivi fork) ───────────────────────────────
+
+/// Raw metrics extracted from a CoreText font (macOS backend only).
+#[cfg(target_os = "macos")]
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct MacMetrics {
+    pub ascent: f32,
+    pub descent: f32,
+    pub leading: f32,
+    pub underline_offset: f32,
+    pub underline_size: f32,
+    pub cap_height: f32,
+    pub x_height: f32,
+}
+
+#[cfg(target_os = "macos")]
+fn to_run_metrics<B: Brush>(
+    ct: &MacMetrics,
+    font_size: f32,
+    style: &Style<B>,
+) -> RunMetrics {
+    let (strikethrough_offset, strikethrough_size) = {
+        let default = font_size / 18.0;
+        (ct.ascent / 2.0, default)
+    };
+    let line_height = match style.line_height {
+        LineHeight::Absolute(value) => value,
+        LineHeight::FontSizeRelative(value) => value * font_size,
+        LineHeight::MetricsRelative(value) => (ct.ascent - ct.descent + ct.leading) * value,
+    };
+    RunMetrics {
+        ascent: ct.ascent,
+        descent: -ct.descent,
+        leading: ct.leading,
+        underline_offset: ct.underline_offset,
+        underline_size: ct.underline_size,
+        strikethrough_offset,
+        strikethrough_size,
+        line_height,
+        x_height: Some(ct.x_height),
+        cap_height: Some(ct.cap_height),
+    }
+}
+
+impl<B: Brush> LayoutData<B> {
+    /// Push a CoreText-shaped run (macOS only).
+    ///
+    /// The upstream [`push_run`](Self::push_run) is hard-wired to a
+    /// `harfrust::GlyphBuffer` and computes metrics from a skrifa `FontRef` over a
+    /// `FontData` blob; CoreText cascade fonts have no blob and their positions
+    /// are already in points. This variant takes precomputed CoreText metrics and
+    /// per-glyph data instead, and records the run's self-describing native font
+    /// identity (KTD4).
+    #[cfg(target_os = "macos")]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn push_run_coretext(
+    &mut self,
+    native_font: Option<crate::MacNativeFont>,
+    font_size: f32,
+    font_attrs: fontique::Attributes,
+    bidi_level: u8,
+    style_index: u16,
+    word_spacing: f32,
+    letter_spacing: f32,
+    run_text: &str,
+    char_infos: &[(CharInfo, u16)],
+    text_range: Range<usize>,
+    metrics: MacMetrics,
+    glyphs: &[(u32, f32, f32, f32, usize)], // (glyph id, x, y, advance, byte offset in run_text)
+) {
+    // Sentinel empty FontData keeps `Run::font()` compilable; blitz-paint
+    // early-continues on native-key runs before touching the blob (U3).
+    let font = FontData::new(Blob::new(Arc::new(Vec::<u8>::new())), 0);
+    let font_index = self
+        .fonts
+        .iter()
+        .position(|f| *f == font)
+        .unwrap_or_else(|| {
+            let index = self.fonts.len();
+            self.fonts.push(font);
+            index
+        });
+
+    let cluster_range_start = self.clusters.len();
+    let mut run = RunData {
+        font_index,
+        font_size,
+        font_attrs,
+        synthesis: fontique::Synthesis::default(),
+        coords_range: self.coords.len()..self.coords.len(),
+        text_range: text_range.clone(),
+        bidi_level,
+        cluster_range: cluster_range_start..cluster_range_start,
+        glyph_start: self.glyphs.len(),
+        metrics: to_run_metrics(&metrics, font_size, &self.styles[style_index as usize]),
+        word_spacing,
+        letter_spacing,
+        advance: 0.0,
+        native_font,
+    };
+
+    let is_rtl = bidi_level & 1 == 1;
+    run.advance = process_clusters_coretext(
+        is_rtl,
+        &mut self.clusters,
+        &mut self.glyphs,
+        glyphs,
+        char_infos,
+        run_text,
+    );
+    run.cluster_range = cluster_range_start..self.clusters.len();
+    if !run.cluster_range.is_empty() {
+        self.runs.push(run);
+        self.items.push(LayoutItem {
+            kind: LayoutItemKind::TextRun,
+            index: self.runs.len() - 1,
+            bidi_level,
+        });
+    }
+    }
+}
+
+/// Build parley clusters/glyphs from CoreText per-glyph data (macOS only).
+///
+/// CoreText emits glyphs in visual order; parley stores clusters in logical
+/// order, so RTL runs are reversed after grouping (mirrors the harfrust path).
+#[cfg(target_os = "macos")]
+fn process_clusters_coretext(
+    is_rtl: bool,
+    clusters: &mut Vec<ClusterData>,
+    glyphs: &mut Vec<Glyph>,
+    input: &[(u32, f32, f32, f32, usize)],
+    char_infos: &[(CharInfo, u16)],
+    run_text: &str,
+) -> f32 {
+    // Group consecutive glyphs sharing a cluster byte offset.
+    let mut groups: Vec<(usize, Vec<(u32, f32, f32, f32)>)> = Vec::new();
+    for &(id, x, y, adv, off) in input {
+        if let Some(last) = groups.last_mut() {
+            if last.0 == off {
+                last.1.push((id, x, y, adv));
+                continue;
+            }
+        }
+        groups.push((off, vec![(id, x, y, adv)]));
+    }
+    if is_rtl {
+        groups.reverse();
+    }
+
+    let run_glyph_start = glyphs.len() as u32;
+    let mut run_advance = 0.0;
+    let mut glyph_cursor = glyphs.len() as u32;
+
+    for (gi, (off, group_glyphs)) in groups.iter().enumerate() {
+        let char_index = run_text[..*off].chars().count();
+        let Some(&char_info) = char_infos.get(char_index).or_else(|| char_infos.last()) else {
+            // No char info for this cluster (shouldn't happen for well-formed
+            // runs); drop the cluster to avoid an out-of-bounds panic.
+            continue;
+        };
+        let source_char = run_text[*off..].chars().next().unwrap_or('\u{FFFD}');
+        let next_off = groups
+            .get(gi + 1)
+            .map(|(no, _)| *no)
+            .unwrap_or(run_text.len());
+        let num_chars = run_text[*off..next_off].chars().count().max(1);
+        let cluster_advance: f32 = group_glyphs.iter().map(|g| g.3).sum();
+        run_advance += cluster_advance;
+        let is_newline = to_whitespace(source_char) == Whitespace::Newline;
+        let cluster_type = if num_chars > 1 {
+            ClusterType::LigatureStart
+        } else if is_newline {
+            ClusterType::Newline
+        } else {
+            ClusterType::Regular
+        };
+
+        // `ClusterData.glyph_offset` is relative to the run's glyph base.
+        let glyph_offset = glyph_cursor - run_glyph_start;
+        if !is_newline {
+            for &(id, x, y, adv) in group_glyphs {
+                glyphs.push(Glyph {
+                    id,
+                    style_index: char_info.1,
+                    x,
+                    y,
+                    advance: adv,
+                });
+                glyph_cursor += 1;
+            }
+        }
+        let num_glyphs = if is_newline { 0 } else { group_glyphs.len() as u32 };
+        let per_char_advance = cluster_advance / num_chars as f32;
+        push_cluster_coretext(
+            clusters,
+            char_info,
+            *off,
+            source_char,
+            glyph_offset,
+            per_char_advance,
+            num_glyphs,
+            cluster_type,
+        );
+
+        // Ligature component clusters for the remaining characters.
+        if num_chars > 1 {
+            let mut consumed = source_char.len_utf8();
+            for (ci, ch) in run_text[*off..next_off].chars().skip(1).enumerate() {
+                let comp_char_info = char_infos
+                    .get(char_index + 1 + ci)
+                    .copied()
+                    .unwrap_or(char_info);
+                push_cluster_coretext(
+                    clusters,
+                    comp_char_info,
+                    *off + consumed,
+                    ch,
+                    0,
+                    per_char_advance,
+                    0,
+                    ClusterType::LigatureComponent,
+                );
+                consumed += ch.len_utf8();
+            }
+        }
+    }
+    run_advance
+}
+
+/// Push a single parley cluster from CoreText data (macOS only).
+#[cfg(target_os = "macos")]
+fn push_cluster_coretext(
+    clusters: &mut Vec<ClusterData>,
+    char_info: (CharInfo, u16),
+    byte_off_in_run: usize,
+    source_char: char,
+    glyph_offset: u32,
+    advance: f32,
+    num_glyphs: u32,
+    cluster_type: ClusterType,
+) {
+    let (final_glyph_len, final_glyph_offset, final_advance) = match cluster_type {
+        ClusterType::LigatureComponent => (0_u8, 0_u32, advance),
+        ClusterType::Newline => (0_u8, 0_u32, 0.0),
+        ClusterType::Regular | ClusterType::LigatureStart => {
+            (num_glyphs as u8, glyph_offset, advance)
+        }
+    };
+    clusters.push(ClusterData {
+        info: ClusterInfo::new(char_info.0.boundary, source_char),
+        flags: (&cluster_type).into(),
+        style_index: char_info.1,
+        glyph_len: final_glyph_len,
+        text_len: source_char.len_utf8() as u8,
+        glyph_offset: final_glyph_offset,
+        text_offset: byte_off_in_run as u16,
         advance: final_advance,
     });
 }

@@ -33,6 +33,8 @@ pub use line_break::{
     BoxBreakData, BreakLines, BreakerState, LineBreakData, MaxHeightBreakData, YieldData,
 };
 pub use run::{Run, RunMetrics};
+#[cfg(target_os = "macos")]
+pub(crate) use data::MacMetrics;
 
 pub(crate) use data::{LayoutData, LayoutItem, LayoutItemKind, LineData, LineItemData};
 pub(crate) use line::LineItem;

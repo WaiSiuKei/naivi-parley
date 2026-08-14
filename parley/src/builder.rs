@@ -292,6 +292,23 @@ fn build_into_layout<B: Brush>(
     // Note: It's important that this is a stable sort to allow users to control the order of contiguous inline boxes
     lcx.inline_boxes.sort_by_key(|b| b.index);
 
+    #[cfg(target_os = "macos")]
+    let mac_family_names = {
+        let mut names = super::shape::macos::MacFamilyNames::default();
+        for style in &lcx.style_table {
+            if let Some(stack) = lcx.rcx.stack(style.font_family) {
+                for fid in stack {
+                    if names.get(*fid).is_none() {
+                        if let Some(name) = fcx.collection.family_name(*fid) {
+                            names.insert(*fid, name);
+                        }
+                    }
+                }
+            }
+        }
+        names
+    };
+
     {
         let query = fcx.collection.query(&mut fcx.source_cache);
         super::shape::shape_text(
@@ -305,6 +322,8 @@ fn build_into_layout<B: Brush>(
             text,
             layout,
             &lcx.analysis_data_sources,
+            #[cfg(target_os = "macos")]
+            &mac_family_names,
         );
     }
 
