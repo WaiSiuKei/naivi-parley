@@ -14,6 +14,23 @@
 
 Parley provides an API for implementing rich text layout.
 
+## Fork status (naivi-parley)
+
+This is the naivi fork of Parley, maintained for the blitz browser engine.
+
+- **Baseline:** `v0.10.0` tag (`1df9544`) — matches blitz's current parley pin.
+- **Backend branch:** `coretext-backend-v0.10` — adds a macOS CoreText shaping
+  and rasterization backend behind `cfg(target_os = "macos")`. Non-macOS
+  targets keep the upstream harfrust path byte-for-byte.
+- **Diff surface (vs `v0.10.0`):** tracked in this branch's commits; see
+  `git diff v0.10.0 --stat` for the authoritative list. The intent is that the
+  diff stays limited to the CoreText backend modules and their cfg gating, so
+  rebasing along the 0.10 line stays cheap.
+- **Upstream:** `linebender/parley`. When upstream publishes a 0.10.x release,
+  this branch rebases onto it; otherwise it stays pinned at `v0.10.0`.
+  The 0.11-dev line (parley_engine split, `Shaper` trait) is a separate,
+  tracked migration.
+
 ## The Parley text stack
 
 Parley has four key dependencies: Fontique, HarfRust, Skrifa, and ICU4X. These crates cover different pieces of the text-rendering process.

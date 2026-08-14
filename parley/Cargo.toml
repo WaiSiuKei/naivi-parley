@@ -48,3 +48,13 @@ peniko = { workspace = true }
 # We special-case android targets because oxipng doesn't build in Android CI.
 [target.'cfg(not(target_os = "android"))'.dev-dependencies]
 oxipng = { version = "9.1.5", default-features = false, features = ["freestanding"] }
+
+# naivi-parley: macOS CoreText backend (naivi fork).
+# Versions mirror the naive project's proven FFI combination (core-text 21,
+# core-foundation 0.10.0, core-graphics 0.24). These are used only by the
+# cfg(target_os = "macos") CoreText shaping/rasterization path; other targets
+# never compile them.
+[target.'cfg(target_os = "macos")'.dependencies]
+core-text = "21"
+core-foundation = "=0.10.0"
+core-graphics = "0.24"
