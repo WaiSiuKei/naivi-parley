@@ -51,9 +51,11 @@ oxipng = { version = "9.1.5", default-features = false, features = ["freestandin
 
 # naivi-parley: macOS CoreText backend (naivi fork).
 # Versions mirror the naive project's proven FFI combination (core-text 21,
-# core-foundation 0.10.0). These are used only by the cfg(target_os = "macos")
-# CoreText shaping path; other targets never compile them. (CoreGraphics
-# rasterization lives in blitz's blitz-macos-text crate, not in this fork.)
+# core-foundation 0.10). The core-foundation requirement is a semver-compatible
+# range (not "=0.10.0") so blitz's workspace can unify with an existing 0.10.x
+# in its lockfile. These are used only by the cfg(target_os = "macos") CoreText
+# shaping path; other targets never compile them. (CoreGraphics rasterization
+# lives in blitz's blitz-macos-text crate, not in this fork.)
 [target.'cfg(target_os = "macos")'.dependencies]
 core-text = "21"
-core-foundation = "=0.10.0"
+core-foundation = "0.10"
