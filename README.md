@@ -22,10 +22,19 @@ This is the naivi fork of Parley, maintained for the blitz browser engine.
 - **Backend branch:** `coretext-backend-v0.10` — adds a macOS CoreText shaping
   and rasterization backend behind `cfg(target_os = "macos")`. Non-macOS
   targets keep the upstream harfrust path byte-for-byte.
-- **Diff surface (vs `v0.10.0`):** tracked in this branch's commits; see
-  `git diff v0.10.0 --stat` for the authoritative list. The intent is that the
-  diff stays limited to the CoreText backend modules and their cfg gating, so
-  rebasing along the 0.10 line stays cheap.
+- **Diff surface (vs `v0.10.0`):** `git diff v0.10.0 --stat` is the
+  authoritative list. As of `49cfa3c` it is 13 files / +1021 lines, of which
+  the two new CoreText modules (`parley/src/macos_font.rs` and
+  `parley/src/shape/macos/mod.rs`) account for ~613 lines. Modified upstream
+  files are limited to the cfg gating/dispatch and the run-push seam:
+  `parley/src/shape/mod.rs` (+38, dispatch), `parley/src/layout/data.rs`
+  (+274, `push_run_coretext` + CoreText cluster builder),
+  `parley/src/layout/{mod,run}.rs`, `parley/src/builder.rs` (family-name
+  snapshot), `parley/Cargo.toml` (cfg macos deps), `parley/src/lib.rs`
+  (re-export), `parley/src/tests/mod.rs` (harfrust suites are cfg(not macos)),
+  plus `Cargo.lock` and `README.md`.
+  Rebase along the 0.10 line stays cheap because the only cfg-gated edit in
+  the shared shaping file is the dispatch block in `shape_item`.
 - **Upstream:** `linebender/parley`. When upstream publishes a 0.10.x release,
   this branch rebases onto it; otherwise it stays pinned at `v0.10.0`.
   The 0.11-dev line (parley_engine split, `Shaper` trait) is a separate,
