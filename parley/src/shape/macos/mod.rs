@@ -130,8 +130,36 @@ fn apply_base_direction(attributed: &mut CFMutableAttributedString, cf_len: CFIn
 
 // ── Font construction ──────────────────────────────────────────────────
 
+/// Whether `family` is a macOS system UI family (what `-apple-system` and
+/// `system-ui` resolve to). These fonts cannot be created by name — CoreText
+/// substitutes Times — and must be created through the UI-font API.
+fn is_system_ui_family(family: &str) -> bool {
+    matches!(
+        family,
+        "System Font" | ".SF NS" | ".SF UI" | ".AppleSystemUIFont" | ".SF NS Text"
+    ) || family.starts_with(".SF")
+}
+
 /// Build a CoreText font for the given family, weight, slant and size.
 fn make_font(family: &str, weight: FontWeight, style: FontStyle, size: f32) -> Option<CTFont> {
+    // System UI fonts (e.g. `-apple-system`) must go through the UI-font API;
+    // creating them by family name makes CoreText substitute Times instead.
+    if is_system_ui_family(family) {
+        let ui_type = if weight.value() >= 600.0 {
+            core_text::font::kCTFontEmphasizedSystemFontType
+        } else {
+            core_text::font::kCTFontSystemFontType
+        };
+        let font = core_text::font::new_ui_font_for_language(ui_type, size as f64, None);
+        if matches!(style, FontStyle::Normal) {
+            return Some(font);
+        }
+        return font.clone_with_symbolic_traits(
+            core_text::font_descriptor::kCTFontItalicTrait,
+            core_text::font_descriptor::kCTFontItalicTrait,
+        );
+    }
+
     let weight_num = CFNumber::from(weight.value() as f64);
     let (slant_num, has_slant) = match style {
         FontStyle::Normal => (CFNumber::from(0.0f64), false),
@@ -593,6 +621,35 @@ mod tests {
         assert!(
             ps.to_lowercase().contains("bold") || !ps.eq_ignore_ascii_case("Helvetica"),
             "expected a bold face, got {ps}"
+        );
+    }
+
+    #[test]
+    fn system_ui_family_resolves_to_sf_not_times() {
+        // `-apple-system` / `system-ui` must resolve to the real system UI font
+        // (SF), not a Times substitution from creating the family by name.
+        let collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
+        });
+        let mut fcx = FontContext {
+            collection,
+            source_cache: SourceCache::default(),
+        };
+        let mut lcx: LayoutContext = LayoutContext::new();
+        let mut rb = lcx.ranged_builder(&mut fcx, "Hello", 16.0, false);
+        rb.push_default(FontFamily::from(
+            &[FontFamilyName::Generic(crate::GenericFamily::SystemUi)][..],
+        ));
+        let mut layout = rb.build("Hello");
+        layout.break_all_lines(None);
+        let summary = run_summary(&layout);
+        assert!(!summary.is_empty(), "expected at least one run");
+        let ps = &summary[0].0;
+        let lower = ps.to_lowercase();
+        assert!(
+            lower.contains("sf") || lower.contains("system") || lower.contains("apple"),
+            "expected the system UI font, got {ps}"
         );
     }
 }
