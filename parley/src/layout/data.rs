@@ -1155,11 +1155,16 @@ fn process_clusters_coretext(
         // `ClusterData.glyph_offset` is relative to the run's glyph base.
         let glyph_offset = glyph_cursor - run_glyph_start;
         if !is_newline {
-            for &(id, x, y, adv) in group_glyphs {
+            for &(id, _pen_x, y, adv) in group_glyphs {
+                // Parley positions glyphs by accumulating `advance` and adding
+                // the run offset in `positioned_glyphs`; `Glyph.x` is only a
+                // per-glyph pen offset (usually 0), NOT the pen position.
+                // CoreText's pen x must not be stored here or it gets added
+                // twice and the run drifts right.
                 glyphs.push(Glyph {
                     id,
                     style_index: char_info.1,
-                    x,
+                    x: 0.0,
                     y,
                     advance: adv,
                 });
