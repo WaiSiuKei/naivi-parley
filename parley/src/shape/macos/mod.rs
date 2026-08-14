@@ -296,7 +296,14 @@ pub(super) fn shape_item_coretext<B: Brush>(
     else {
         return;
     };
-    let cascade_font = with_cascade(&base_font, item.size, &family_names[1..]);
+    // `family_names` can be empty when no font in the resolved stack matches
+    // the item (e.g. system fonts disabled and the glyph uncovered by every
+    // registered font); `&family_names[1..]` would panic on an empty slice.
+    let cascade_font = if family_names.len() > 1 {
+        with_cascade(&base_font, item.size, &family_names[1..])
+    } else {
+        base_font.clone()
+    };
 
     // Attributed string over the whole item text with the (cascade) font.
     let cf_string = CFString::new(item_text);
