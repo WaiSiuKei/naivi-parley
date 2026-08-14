@@ -625,6 +625,22 @@ mod tests {
     }
 
     #[test]
+    fn metrics_descent_is_positive() {
+        // CoreText ascent/descent are positive distances from the baseline;
+        // RunMetrics.descent must stay positive to match the skrifa path
+        // (draw_inline_backgrounds does y1 = baseline + descent).
+        let layout = shape("Hello");
+        let line = layout.lines().next().unwrap();
+        for item in line.items() {
+            if let PositionedLayoutItem::GlyphRun(gr) = item {
+                let m = gr.run().metrics();
+                assert!(m.descent > 0.0, "descent must be positive, got {}", m.descent);
+                assert!(m.ascent > 0.0);
+            }
+        }
+    }
+
+    #[test]
     fn system_ui_family_resolves_to_sf_not_times() {
         // `-apple-system` / `system-ui` must resolve to the real system UI font
         // (SF), not a Times substitution from creating the family by name.

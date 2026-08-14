@@ -1002,11 +1002,14 @@ fn to_run_metrics<B: Brush>(
     let line_height = match style.line_height {
         LineHeight::Absolute(value) => value,
         LineHeight::FontSizeRelative(value) => value * font_size,
-        LineHeight::MetricsRelative(value) => (ct.ascent - ct.descent + ct.leading) * value,
+        // CoreText's ascent/descent are both positive distances from the
+        // baseline, matching parley's RunMetrics convention (the skrifa path
+        // negates a negative descent to reach the same positive value).
+        LineHeight::MetricsRelative(value) => (ct.ascent + ct.descent + ct.leading) * value,
     };
     RunMetrics {
         ascent: ct.ascent,
-        descent: -ct.descent,
+        descent: ct.descent,
         leading: ct.leading,
         underline_offset: ct.underline_offset,
         underline_size: ct.underline_size,
