@@ -518,6 +518,35 @@ mod tests {
     }
 
     #[test]
+    fn zwj_emoji_shapes_as_single_glyph() {
+        // CoreText ligates ZWJ sequences into a single glyph; the native
+        // reference render (macOS CoreText) produces exactly 1 glyph / 1 run
+        // for every sequence below. The CoreText backend must match.
+        let sequences = [
+            "👨‍👩‍👧",
+            "👨‍👩‍👧‍👦",
+            "👩‍💻",
+            "🏳️‍🌈",
+            "👍🏻",
+            "👨‍👦",
+            "❤️",
+            "🚴‍♂️",
+        ];
+        for seq in sequences {
+            let layout = shape(seq);
+            let mut total = 0usize;
+            for line in layout.lines() {
+                for item in line.items() {
+                    if let PositionedLayoutItem::GlyphRun(gr) = item {
+                        total += gr.positioned_glyphs().count();
+                    }
+                }
+            }
+            assert_eq!(total, 1, "ZWJ sequence {seq:?} must shape to a single glyph");
+        }
+    }
+
+    #[test]
     fn native_font_key_resolves_back_to_ctfont() {
         // KTD4: the self-describing key must resolve to a CTFont on the
         // consumer side (blitz) without any fork-internal registry.
