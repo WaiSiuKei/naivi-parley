@@ -271,6 +271,14 @@ pub(super) fn shape_item_coretext<B: Brush>(
     }
     let style = &styles[item.style_index as usize];
 
+    // `font-size: 0` must render nothing. CoreText clamps a 0pt font request
+    // to a default size (12-13pt), which would make zero-size CSS text visible
+    // and take up space; the skrifa path scales to zero instead. Match it by
+    // producing no runs for non-positive sizes.
+    if item.size <= 0.0 {
+        return;
+    }
+
     // Resolve the family stack to names for the primary font and the cascade
     // preference list (KTD3).
     let family_ids = rcx.stack(style.font_family).unwrap_or(&[]);
@@ -622,6 +630,38 @@ mod tests {
             ps.to_lowercase().contains("bold") || !ps.eq_ignore_ascii_case("Helvetica"),
             "expected a bold face, got {ps}"
         );
+    }
+
+    #[test]
+    fn zero_font_size_produces_no_runs() {
+        // `font-size: 0` must render nothing: CoreText clamps a 0pt request
+        // to a default size (12-13pt), which would otherwise make zero-size
+        // CSS text visible (e.g. the todomvc toggle-all label).
+        let collection = Collection::new(CollectionOptions {
+            shared: false,
+            system_fonts: true,
+        });
+        let mut fcx = FontContext {
+            collection,
+            source_cache: SourceCache::default(),
+        };
+        let mut lcx: LayoutContext = LayoutContext::new();
+        let mut rb = lcx.ranged_builder(&mut fcx, "Hello", 1.0, false);
+        rb.push_default(crate::StyleProperty::FontSize(0.0));
+        rb.push_default(FontFamily::from(
+            &[FontFamilyName::Named(Cow::Borrowed("Helvetica"))][..],
+        ));
+        let mut layout = rb.build("Hello");
+        layout.break_all_lines(None);
+        let mut runs = 0;
+        for line in layout.lines() {
+            for item in line.items() {
+                if let PositionedLayoutItem::GlyphRun(_) = item {
+                    runs += 1;
+                }
+            }
+        }
+        assert_eq!(runs, 0, "font-size 0 must produce no glyph runs");
     }
 
     #[test]
