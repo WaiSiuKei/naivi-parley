@@ -153,6 +153,39 @@ impl<'a> Query<'a> {
                     return;
                 }
             }
+            // Google Fonts slices: one family, many faces that tie on the exact
+            // (width, style, weight), each carrying a `unicode-range` subset.
+            // Offer every tied face so the shaper can pick per character by
+            // cmap coverage (CSS `@font-face` unicode-range semantics) instead
+            // of stopping at the first face — otherwise only one slice's glyphs
+            // are ever reachable and the others render as tofu.
+            if let Some(best_index) = best_index {
+                let attrs = self.attributes;
+                for (idx, font_info) in family_info.fonts().iter().enumerate() {
+                    if idx == best_index {
+                        continue;
+                    }
+                    if font_info.width() != attrs.width
+                        || font_info.style() != attrs.style
+                        || font_info.weight() != attrs.weight
+                    {
+                        continue;
+                    }
+                    let Some(blob) = font_info.load(Some(self.source_cache)) else {
+                        continue;
+                    };
+                    let tied = QueryFont {
+                        family: (family.id, idx),
+                        blob,
+                        index: font_info.index(),
+                        synthesis: font_info.synthesis(attrs.width, attrs.style, attrs.weight),
+                        charmap_index: font_info.charmap_index(),
+                    };
+                    if f(&tied) == QueryStatus::Stop {
+                        return;
+                    }
+                }
+            }
             // Don't invoke for the default font if it's the same as the
             // best match.
             if best_index == Some(family_info.default_font_index()) {

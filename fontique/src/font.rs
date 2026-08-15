@@ -94,13 +94,19 @@ impl FontInfo {
             synth.vars[len] = (Tag::new(b"wdth"), width.percentage());
             len += 1;
         }
-        if self.weight != weight {
-            if self.has_weight_axis() {
-                synth.vars[len] = (Tag::new(b"wght"), weight.value());
-                len += 1;
-            } else if weight.value() > self.weight.value() {
-                synth.embolden = true;
-            }
+        if self.has_weight_axis() {
+            // Variable font: always render at the requested weight via the
+            // `wght` axis, even when the face's reported weight matches the
+            // request. This is CSS-correct (`font-weight: N` on a variable
+            // font sets `wght=N`) and covers Google Fonts' CJK slices, which
+            // are variable fonts whose default instance is Thin (wght=100)
+            // even though the `@font-face` declares 400 — without this, an
+            // exact reported-weight match skips the axis and glyphs render
+            // at the internal default.
+            synth.vars[len] = (Tag::new(b"wght"), weight.value());
+            len += 1;
+        } else if self.weight != weight && weight.value() > self.weight.value() {
+            synth.embolden = true;
         }
         if self.style != style {
             match style {
