@@ -23,7 +23,7 @@ members = [
 [workspace.package]
 edition = "2021"
 version = "0.10.0"
-# Keep in sync with RUST_MIN_VER in .github/workflows/ci.yml, with the relevant README.md files
+# Keep in sync with the relevant README.md files
 # and with the MSRV in the `Unreleased` section of CHANGELOG.md.
 rust-version = "1.88"
 license = "Apache-2.0 OR MIT"
